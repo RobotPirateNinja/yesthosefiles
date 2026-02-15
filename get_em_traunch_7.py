@@ -1,6 +1,6 @@
 """
-Sequential document downloader for DOJ Epstein dataset.
-Downloads EFTA00000001 through EFTA00003158; tries multiple extensions per file (.pdf, .doc, etc.).
+Sequential PDF downloader for DOJ Epstein dataset.
+Downloads EFTA00000001.pdf through EFTA00003158.pdf with 2-4s delay between requests.
 
 Requires passing the age/robot verification once in a browser, then reuses cookies:
   python get_em.py --auth     # open browser, you verify, cookies saved
@@ -8,9 +8,6 @@ Requires passing the age/robot verification once in a browser, then reuses cooki
 
   python get_em.py --verify   # print what we get from the first URL (no auth)
   python get_em.py --no-pause # download with no delay between requests
-
-Session cookies expire in ~5 min. The script refreshes proactively (every 4 min) and
-prompts to re-verify when a response looks like the age gate. Set REFRESH_AUTH_INTERVAL_SECONDS = 0 to disable proactive refresh.
 """
 
 import argparse
@@ -23,18 +20,14 @@ from pathlib import Path
 import requests
 
 # --- Config (edit as needed) ---
-BASE_URL = "https://www.justice.gov/epstein/files/DataSet%201/"
-START_INDEX = 7823
-END_INDEX = 8120  # inclusive
-OUTPUT_DIR = Path("downloads_other")
+BASE_URL = "https://www.justice.gov/epstein/files/DataSet%207/"
+START_INDEX = 9419 #9016 
+END_INDEX = 9676  # inclusive
+OUTPUT_DIR = Path("downloads_7th_batch")
 COOKIES_FILE = Path("cookies.json")
-DELAY_MIN = 1
-DELAY_MAX = 1
+DELAY_MIN = 2
+DELAY_MAX = 4
 RUN_TIMEOUT_SECONDS = 300  # 5 minutes; main download loop exits after this
-# Refresh cookies before they expire (session is ~5 min). Set to 0 to disable proactive refresh.
-REFRESH_AUTH_INTERVAL_SECONDS = 240  # re-prompt for auth every 4 minutes
-# Try these extensions in order until one returns a real file (not HTML)
-EXTENSIONS_TO_TRY = [".pdf", ".mp3", ".wav", ".doc", ".docx", ".txt"]
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -43,13 +36,7 @@ USER_AGENT = (
 
 
 def _first_url() -> str:
-    return BASE_URL.rstrip("/") + "/" + f"EFTA{START_INDEX:08d}{EXTENSIONS_TO_TRY[0]}"
-
-
-def _looks_like_html(first_chunk: bytes) -> bool:
-    """True if content looks like an HTML page (e.g. age verification)."""
-    start = first_chunk.lstrip()[:50].lower()
-    return start.startswith(b"<") or start.startswith(b"<!doctype")
+    return BASE_URL.rstrip("/") + "/" + f"EFTA{START_INDEX:08d}.pdf"
 
 
 def verify_response() -> None:
@@ -113,81 +100,49 @@ def main(*, no_pause: bool = False) -> None:
     success_count = 0
     failed: list[tuple[int, str]] = []
     start = time.time()
-    last_auth_time = time.time()
 
-    base = BASE_URL.rstrip("/") + "/"
-    i = START_INDEX
-    while i <= END_INDEX:
+    for i in range(START_INDEX, END_INDEX + 1):
         if (time.time() - start) >= RUN_TIMEOUT_SECONDS:
             print(f"\n5 minute limit reached. Stopping. ({success_count}/{total} succeeded so far)", file=sys.stderr)
             break
-        # Proactive refresh: re-auth before cookies expire
-        if REFRESH_AUTH_INTERVAL_SECONDS > 0 and (time.time() - last_auth_time) >= REFRESH_AUTH_INTERVAL_SECONDS:
-            print("\nRefreshing session (cookies expire in ~5 min). Please re-verify in the browser.", file=sys.stderr)
-            run_auth_browser()
-            load_cookies(session)
-            last_auth_time = time.time()
-        name_base = f"EFTA{i:08d}"
-        # Skip if we already have this document under any extension
-        existing = next((OUTPUT_DIR / f"{name_base}{ext}" for ext in EXTENSIONS_TO_TRY if (OUTPUT_DIR / f"{name_base}{ext}").exists()), None)
-        if existing is not None:
-            print(f"[{i - START_INDEX + 1}/{total}] Skip (exists): {existing.name}", file=sys.stderr)
+        filename = f"EFTA{i:08d}.pdf"
+        url = BASE_URL.rstrip("/") + "/" + filename
+        out_path = OUTPUT_DIR / filename
+
+        if out_path.exists():
+            print(f"[{i - START_INDEX + 1}/{total}] Skip (exists): {filename}", file=sys.stderr)
             success_count += 1
-            if not no_pause:
-                _pause()
-            i += 1
             continue
 
-        downloaded = False
-        for ext in EXTENSIONS_TO_TRY:
-            filename = f"{name_base}{ext}"
-            url = base + filename
-            out_path = OUTPUT_DIR / filename
-            try:
-                r = session.get(url, stream=True, timeout=60)
-                if r.status_code == 404:
-                    continue
-                r.raise_for_status()
-                first_chunk = next(r.iter_content(chunk_size=8192), b"")
-                # PDF must start with %PDF; other extensions just must not be HTML
-                if ext == ".pdf" and not first_chunk.startswith(b"%PDF"):
-                    continue
-                if _looks_like_html(first_chunk):
-                    continue
-                with open(out_path, "wb") as f:
-                    f.write(first_chunk)
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                success_count += 1
-                print(f"[{success_count}/{total}] Downloaded: {filename}", file=sys.stderr)
-                downloaded = True
-                break
-            except requests.RequestException as e:
-                failed.append((i, str(e)))
-                print(f"[{i - START_INDEX + 1}/{total}] Failed {filename}: {e}", file=sys.stderr)
-                break
-        if not downloaded:
-            if any(f[0] == i for f in failed):
-                pass  # already failed with an exception
-            else:
-                # No valid file (likely HTML age gate = session expired). Offer to re-auth and retry.
-                reply = input("Session may have expired. Re-verify in browser and retry this file? (y/n): ").strip().lower()
-                if reply == "y":
-                    run_auth_browser()
-                    load_cookies(session)
-                    last_auth_time = time.time()
-                    continue  # retry same index
-                failed.append((i, "no extension returned a valid file (tried " + ", ".join(EXTENSIONS_TO_TRY) + ")"))
-                print(f"[{i - START_INDEX + 1}/{total}] No valid file for {name_base} (tried {EXTENSIONS_TO_TRY})", file=sys.stderr)
+        try:
+            r = session.get(url, stream=True, timeout=60)
+            r.raise_for_status()
+            # Peek first chunk: real PDFs start with b'%PDF'
+            first_chunk = next(r.iter_content(chunk_size=8192), b"")
+            if not first_chunk.startswith(b"%PDF"):
+                content_type = r.headers.get("Content-Type", "")
+                failed.append((i, f"not a PDF (Content-Type: {content_type}, first bytes: {first_chunk[:50]!r})"))
+                print(f"[{i - START_INDEX + 1}/{total}] Not a PDF (likely HTML/error page): {filename}", file=sys.stderr)
+                if not no_pause:
+                    _pause()
+                continue
+            with open(out_path, "wb") as f:
+                f.write(first_chunk)
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            success_count += 1
+            print(f"[{success_count}/{total}] Downloaded: {filename}", file=sys.stderr)
+        except requests.RequestException as e:
+            failed.append((i, str(e)))
+            print(f"[{i - START_INDEX + 1}/{total}] Failed {filename}: {e}", file=sys.stderr)
 
         if not no_pause:
             _pause()
-        i += 1
 
     if failed:
         print(f"\nFailed ({len(failed)}):", file=sys.stderr)
         for idx, err in failed:
-            print(f"  EFTA{idx:08d}: {err}", file=sys.stderr)
+            print(f"  EFTA{idx:08d}.pdf: {err}", file=sys.stderr)
     print(f"\nDone. {success_count}/{total} succeeded.", file=sys.stderr)
 
 
