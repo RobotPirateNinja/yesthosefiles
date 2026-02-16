@@ -1,6 +1,7 @@
-# DOJ Epstein Dataset PDF Downloader
+# DOJ Epstein Dataset File Downloader
 
-This project contains scripts that download PDF files from the U.S. Department of Justice’s Epstein document dataset. The site sometimes asks you to prove you’re not a robot and confirm your age; these scripts let you do that once in a browser, then reuse that “login” to download many files automatically.
+This project contains scripts that download ~~PDF~~ all files from the U.S. Department of Justice’s Epstein document dataset. The site sometimes asks you to prove you’re not a robot and confirm your age; these scripts let you do that once in a browser, then reuse that “login” to download many files automatically.
+
 
 **You don’t need to know Python.** You only need to run a few commands in a terminal (Command Prompt on Windows, or Terminal on Mac/Linux).
 
