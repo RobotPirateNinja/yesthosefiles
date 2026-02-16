@@ -21,8 +21,8 @@ import requests
 
 # --- Config (edit as needed) ---
 BASE_URL = "https://www.justice.gov/epstein/files/DataSet%208/"
-START_INDEX = 33305 #33194 #33102 #33000 #30000 #25797 #25276 #24671 #24166 #23744 #23305 #22793 #22307 #21818 #21318 #20684 #20242 #19758 #19224 #18857 #18432 #17701 #17048 #16483 #16115 #15539 #15214 #14840 #14336 #13694 #13171 #12110 #11618 #11186 #10757 #10240 #9676 #9419 
-END_INDEX = 39024  # inclusive
+START_INDEX = 16338 #33305 #33194 #33102 #33000 #30000 #25797 #25276 #24671 #24166 #23744 #23305 #22793 #22307 #21818 #21318 #20684 #20242 #19758 #19224 #18857 #18432 #17701 #17048 #16483 #16115 #15539 #15214 #14840 #14336 #13694 #13171 #12110 #11618 #11186 #10757 #10240 #9676 #9419 
+END_INDEX = 16341 #39024  # inclusive
 OUTPUT_DIR = Path("downloads_8th_batch")
 COOKIES_FILE = Path("cookies.json")
 DELAY_MIN = 2
@@ -207,8 +207,8 @@ def main(*, no_pause: bool = False) -> None:
                 mp4_path = OUTPUT_DIR / f"EFTA{i:08d}.mp4"
                 _try_download_alternate(session, base + ".mp4", mp4_path, no_pause, "mp4")
             elif stub_type == "5kb":
-                # ~5 KB stub: try .xlsx, then .m4a, then .mp4 (stop when one succeeds)
-                for ext in (".xlsx", ".m4a", ".mp4"):
+                # ~5 KB stub: try .xlsx, then .m4a, then .mp4, then .csv (stop when one succeeds)
+                for ext in (".xlsx", ".m4a", ".csv", ".mp4"):
                     alt_path = OUTPUT_DIR / f"EFTA{i:08d}{ext}"
                     if _try_download_alternate(session, base + ext, alt_path, no_pause, ext):
                         break
