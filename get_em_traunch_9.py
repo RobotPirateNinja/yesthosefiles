@@ -88,19 +88,16 @@ def load_cookies(session: requests.Session) -> None:
         session.cookies.set(c["name"], c["value"], domain=c["domain"], path=c.get("path", "/"))
 
 
-# ~3 KB: treat as "small stub" range (2.5 KB–4 KB)
-NO_IMAGES_PDF_SIZE_MIN = 2 * 1024   # 2 KB
-NO_IMAGES_PDF_SIZE_MAX = 4 * 1024   # 4 KB
+# ~3 KB stub: 2.5 KB–4 KB; ~5 KB stub: 4 KB–6 KB
+NO_IMAGES_PDF_SIZE_3KB_MIN = 2 * 1024   # 2 KB
+NO_IMAGES_PDF_SIZE_3KB_MAX = 4 * 1024   # 4 KB
+NO_IMAGES_PDF_SIZE_5KB_MIN = 4 * 1024   # 4 KB
+NO_IMAGES_PDF_SIZE_5KB_MAX = 6 * 1024   # 6 KB
 NO_IMAGES_PHRASE = "No Images Produced"
+MIN_ALTERNATE_SIZE = 1024  # don't save error pages / empty responses
 
 
-def _is_no_images_stub_pdf(path: Path) -> bool:
-    """True if PDF is ~3kb and contains 'No Images Produced'."""
-    if not path.is_file():
-        return False
-    size = path.stat().st_size
-    if not (NO_IMAGES_PDF_SIZE_MIN <= size <= NO_IMAGES_PDF_SIZE_MAX):
-        return False
+def _pdf_contains_no_images_phrase(path: Path) -> bool:
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(path)
@@ -110,6 +107,50 @@ def _is_no_images_stub_pdf(path: Path) -> bool:
         finally:
             doc.close()
     except Exception:
+        return False
+
+
+def _no_images_stub_type(path: Path) -> str | None:
+    """Returns '3kb', '5kb', or None if PDF is not a no-images stub."""
+    if not path.is_file():
+        return None
+    size = path.stat().st_size
+    if not _pdf_contains_no_images_phrase(path):
+        return None
+    if NO_IMAGES_PDF_SIZE_3KB_MIN <= size <= NO_IMAGES_PDF_SIZE_3KB_MAX:
+        return "3kb"
+    if NO_IMAGES_PDF_SIZE_5KB_MIN <= size <= NO_IMAGES_PDF_SIZE_5KB_MAX:
+        return "5kb"
+    return None
+
+
+def _try_download_alternate(
+    session: requests.Session,
+    url: str,
+    out_path: Path,
+    no_pause: bool,
+    label: str,
+) -> bool:
+    """Try to download url to out_path. Save only if response body > MIN_ALTERNATE_SIZE. Returns True if saved."""
+    if out_path.exists():
+        return False
+    if not no_pause:
+        _pause()
+    try:
+        r = session.get(url, stream=True, timeout=60)
+        r.raise_for_status()
+        first = next(r.iter_content(chunk_size=8192), b"")
+        if len(first) <= MIN_ALTERNATE_SIZE:
+            print(f"  -> {label}: response too small, skipped", file=sys.stderr)
+            return False
+        with open(out_path, "wb") as f:
+            f.write(first)
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(f"  -> Also saved (no-images stub): {out_path.name}", file=sys.stderr)
+        return True
+    except requests.RequestException as e:
+        print(f"  -> {label}: {e}", file=sys.stderr)
         return False
 
 
@@ -158,29 +199,19 @@ def main(*, no_pause: bool = False) -> None:
             success_count += 1
             print(f"[{success_count}/{total}] Downloaded: {filename}", file=sys.stderr)
 
-            # If PDF is ~3kb and says "No Images Produced", try same base with .mp4
-            if _is_no_images_stub_pdf(out_path):
-                mp4_filename = f"EFTA{i:08d}.mp4"
-                mp4_url = BASE_URL.rstrip("/") + "/" + mp4_filename
-                mp4_path = OUTPUT_DIR / mp4_filename
-                if not mp4_path.exists():
-                    if not no_pause:
-                        _pause()
-                    try:
-                        r_mp4 = session.get(mp4_url, stream=True, timeout=60)
-                        r_mp4.raise_for_status()
-                        # Require some minimal size so we don't save error pages
-                        first_mp4 = next(r_mp4.iter_content(chunk_size=8192), b"")
-                        if len(first_mp4) > 1024:  # assume real video has body
-                            with open(mp4_path, "wb") as f:
-                                f.write(first_mp4)
-                                for chunk in r_mp4.iter_content(chunk_size=8192):
-                                    f.write(chunk)
-                            print(f"  -> Also saved (no-images stub): {mp4_filename}", file=sys.stderr)
-                        else:
-                            print(f"  -> MP4 attempt for {mp4_filename}: response too small, skipped", file=sys.stderr)
-                    except requests.RequestException as e_mp4:
-                        print(f"  -> MP4 attempt for {mp4_filename}: {e_mp4}", file=sys.stderr)
+            # If PDF is "No Images Produced" stub, try alternate extensions.
+            stub_type = _no_images_stub_type(out_path)
+            base = BASE_URL.rstrip("/") + "/" + f"EFTA{i:08d}"
+            if stub_type == "3kb":
+                # ~3 KB stub: try .mp4 only
+                mp4_path = OUTPUT_DIR / f"EFTA{i:08d}.mp4"
+                _try_download_alternate(session, base + ".mp4", mp4_path, no_pause, "mp4")
+            elif stub_type == "5kb":
+                # ~5 KB stub: try .xlsx, then .m4a, then .mp4, then .csv (stop when one succeeds)
+                for ext in (".xlsx", ".m4a", ".csv", ".mp4"):
+                    alt_path = OUTPUT_DIR / f"EFTA{i:08d}{ext}"
+                    if _try_download_alternate(session, base + ext, alt_path, no_pause, ext):
+                        break
         except requests.RequestException as e:
             failed.append((i, str(e)))
             print(f"[{i - START_INDEX + 1}/{total}] Failed {filename}: {e}", file=sys.stderr)
