@@ -21,7 +21,7 @@ import requests
 
 # --- Config (edit as needed) ---
 BASE_URL = "https://www.justice.gov/epstein/files/DataSet%209/"
-START_INDEX = 475860 #475386 #474770 #40277 #39789 #39313 #474309 #39025 
+START_INDEX = 476943 #476471 #475860 #475386 #474770 #40277 #39789 #39313 #474309 #39025 
 END_INDEX = 1262781  # inclusive
 OUTPUT_DIR = Path("downloads_9th_batch")
 COOKIES_FILE = Path("cookies.json")

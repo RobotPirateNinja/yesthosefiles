@@ -25,8 +25,8 @@ START_INDEX = 2205655 #7423  #6698 #6144 #5705  #5587
 END_INDEX = 2730264  # inclusive
 OUTPUT_DIR = Path("downloads_11th_batch")
 COOKIES_FILE = Path("cookies.json")
-DELAY_MIN = 1
-DELAY_MAX = 1
+DELAY_MIN = 2
+DELAY_MAX = 4
 RUN_TIMEOUT_SECONDS = 300  # 5 minutes; main download loop exits after this
 
 USER_AGENT = (
@@ -88,6 +88,72 @@ def load_cookies(session: requests.Session) -> None:
         session.cookies.set(c["name"], c["value"], domain=c["domain"], path=c.get("path", "/"))
 
 
+# ~3 KB stub: 2.5 KB–4 KB; ~5 KB stub: 4 KB–6 KB
+NO_IMAGES_PDF_SIZE_3KB_MIN = 2 * 1024   # 2 KB
+NO_IMAGES_PDF_SIZE_3KB_MAX = 4 * 1024   # 4 KB
+NO_IMAGES_PDF_SIZE_5KB_MIN = 4 * 1024   # 4 KB
+NO_IMAGES_PDF_SIZE_5KB_MAX = 6 * 1024   # 6 KB
+NO_IMAGES_PHRASE = "No Images Produced"
+MIN_ALTERNATE_SIZE = 1024  # don't save error pages / empty responses
+
+
+def _pdf_contains_no_images_phrase(path: Path) -> bool:
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(path)
+        try:
+            text = "".join(page.get_text() for page in doc)
+            return NO_IMAGES_PHRASE in text
+        finally:
+            doc.close()
+    except Exception:
+        return False
+
+
+def _no_images_stub_type(path: Path) -> str | None:
+    """Returns '3kb', '5kb', or None if PDF is not a no-images stub."""
+    if not path.is_file():
+        return None
+    size = path.stat().st_size
+    if not _pdf_contains_no_images_phrase(path):
+        return None
+    if NO_IMAGES_PDF_SIZE_3KB_MIN <= size <= NO_IMAGES_PDF_SIZE_3KB_MAX:
+        return "3kb"
+    if NO_IMAGES_PDF_SIZE_5KB_MIN <= size <= NO_IMAGES_PDF_SIZE_5KB_MAX:
+        return "5kb"
+    return None
+
+
+def _try_download_alternate(
+    session: requests.Session,
+    url: str,
+    out_path: Path,
+    no_pause: bool,
+    label: str,
+) -> bool:
+    """Try to download url to out_path. Save only if response body > MIN_ALTERNATE_SIZE. Returns True if saved."""
+    if out_path.exists():
+        return False
+    if not no_pause:
+        _pause()
+    try:
+        r = session.get(url, stream=True, timeout=60)
+        r.raise_for_status()
+        first = next(r.iter_content(chunk_size=8192), b"")
+        if len(first) <= MIN_ALTERNATE_SIZE:
+            print(f"  -> {label}: response too small, skipped", file=sys.stderr)
+            return False
+        with open(out_path, "wb") as f:
+            f.write(first)
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(f"  -> Also saved (no-images stub): {out_path.name}", file=sys.stderr)
+        return True
+    except requests.RequestException as e:
+        print(f"  -> {label}: {e}", file=sys.stderr)
+        return False
+
+
 def main(*, no_pause: bool = False) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
@@ -132,6 +198,20 @@ def main(*, no_pause: bool = False) -> None:
                     f.write(chunk)
             success_count += 1
             print(f"[{success_count}/{total}] Downloaded: {filename}", file=sys.stderr)
+
+            # If PDF is "No Images Produced" stub, try alternate extensions.
+            stub_type = _no_images_stub_type(out_path)
+            base = BASE_URL.rstrip("/") + "/" + f"EFTA{i:08d}"
+            if stub_type == "3kb":
+                # ~3 KB stub: try .mp4 only
+                mp4_path = OUTPUT_DIR / f"EFTA{i:08d}.mp4"
+                _try_download_alternate(session, base + ".mp4", mp4_path, no_pause, "mp4")
+            elif stub_type == "5kb":
+                # ~5 KB stub: try .xlsx, then .m4a, then .mp4, then .csv (stop when one succeeds)
+                for ext in (".xlsx", ".m4a", ".csv", ".mp4"):
+                    alt_path = OUTPUT_DIR / f"EFTA{i:08d}{ext}"
+                    if _try_download_alternate(session, base + ext, alt_path, no_pause, ext):
+                        break
         except requests.RequestException as e:
             failed.append((i, str(e)))
             print(f"[{i - START_INDEX + 1}/{total}] Failed {filename}: {e}", file=sys.stderr)
