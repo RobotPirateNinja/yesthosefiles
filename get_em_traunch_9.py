@@ -21,12 +21,12 @@ import requests
 
 # --- Config (edit as needed) ---
 BASE_URL = "https://www.justice.gov/epstein/files/DataSet%209/"
-START_INDEX = 475386 #474770 #40277 #39789 #39313 #474309 #39025 
+START_INDEX = 475860 #475386 #474770 #40277 #39789 #39313 #474309 #39025 
 END_INDEX = 1262781  # inclusive
 OUTPUT_DIR = Path("downloads_9th_batch")
 COOKIES_FILE = Path("cookies.json")
-DELAY_MIN = 1
-DELAY_MAX = 1
+DELAY_MIN = 2
+DELAY_MAX = 4
 RUN_TIMEOUT_SECONDS = 300  # 5 minutes; main download loop exits after this
 
 USER_AGENT = (
@@ -88,6 +88,31 @@ def load_cookies(session: requests.Session) -> None:
         session.cookies.set(c["name"], c["value"], domain=c["domain"], path=c.get("path", "/"))
 
 
+# ~3 KB: treat as "small stub" range (2.5 KB–4 KB)
+NO_IMAGES_PDF_SIZE_MIN = 2 * 1024   # 2 KB
+NO_IMAGES_PDF_SIZE_MAX = 4 * 1024   # 4 KB
+NO_IMAGES_PHRASE = "No Images Produced"
+
+
+def _is_no_images_stub_pdf(path: Path) -> bool:
+    """True if PDF is ~3kb and contains 'No Images Produced'."""
+    if not path.is_file():
+        return False
+    size = path.stat().st_size
+    if not (NO_IMAGES_PDF_SIZE_MIN <= size <= NO_IMAGES_PDF_SIZE_MAX):
+        return False
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(path)
+        try:
+            text = "".join(page.get_text() for page in doc)
+            return NO_IMAGES_PHRASE in text
+        finally:
+            doc.close()
+    except Exception:
+        return False
+
+
 def main(*, no_pause: bool = False) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
@@ -132,6 +157,30 @@ def main(*, no_pause: bool = False) -> None:
                     f.write(chunk)
             success_count += 1
             print(f"[{success_count}/{total}] Downloaded: {filename}", file=sys.stderr)
+
+            # If PDF is ~3kb and says "No Images Produced", try same base with .mp4
+            if _is_no_images_stub_pdf(out_path):
+                mp4_filename = f"EFTA{i:08d}.mp4"
+                mp4_url = BASE_URL.rstrip("/") + "/" + mp4_filename
+                mp4_path = OUTPUT_DIR / mp4_filename
+                if not mp4_path.exists():
+                    if not no_pause:
+                        _pause()
+                    try:
+                        r_mp4 = session.get(mp4_url, stream=True, timeout=60)
+                        r_mp4.raise_for_status()
+                        # Require some minimal size so we don't save error pages
+                        first_mp4 = next(r_mp4.iter_content(chunk_size=8192), b"")
+                        if len(first_mp4) > 1024:  # assume real video has body
+                            with open(mp4_path, "wb") as f:
+                                f.write(first_mp4)
+                                for chunk in r_mp4.iter_content(chunk_size=8192):
+                                    f.write(chunk)
+                            print(f"  -> Also saved (no-images stub): {mp4_filename}", file=sys.stderr)
+                        else:
+                            print(f"  -> MP4 attempt for {mp4_filename}: response too small, skipped", file=sys.stderr)
+                    except requests.RequestException as e_mp4:
+                        print(f"  -> MP4 attempt for {mp4_filename}: {e_mp4}", file=sys.stderr)
         except requests.RequestException as e:
             failed.append((i, str(e)))
             print(f"[{i - START_INDEX + 1}/{total}] Failed {filename}: {e}", file=sys.stderr)
