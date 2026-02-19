@@ -21,7 +21,8 @@ import requests
 
 # --- Config (edit as needed) ---
 BASE_URL = "https://www.justice.gov/epstein/files/DataSet%2010/"
-START_INDEX = 1621900 #1621009 #1688313 #1683918 #1683448 #1683300 #1620998 #1621079 #2206230 #2205655 #1264712 #1264520 #1264247 #1263084 #1262782 
+START_INDEX = 1614980 #1614499 #1613722 #1613886 #1613168 #1612935 #1612755 #1612350 #1612190 #1612190 #1605496 #1602825 #1600780 #1648500 #2206758 #1624248 #1622051 #1621900 #1621009 #1688313 #1683918 #1683448 #1683300 #1620998 #1621079 #2206230 #2205655 #1264712 #1264520 #1264247 #1263084 #1262782 
+#START_INDEX = #1614299 #1612251 #1614483
 END_INDEX = 2217416  # inclusive
 OUTPUT_DIR = Path("downloads_10th_batch")
 COOKIES_FILE = Path("cookies.json")
@@ -204,13 +205,13 @@ def main(*, no_pause: bool = False) -> None:
             base = BASE_URL.rstrip("/") + "/" + f"EFTA{i:08d}"
             if stub_type == "3kb":
                 # ~3 KB stub: try .mp4, then .mov (stop when one succeeds)
-                for ext in (".mp4", ".mov",".wav",".mp3"):
+                for ext in (".mp4", ".mov",".wav",".mp3",'.m4v','.m4a','.3gp','.amr'):
                     alt_path = OUTPUT_DIR / f"EFTA{i:08d}{ext}"
                     if _try_download_alternate(session, base + ext, alt_path, no_pause, ext):
                         break
             elif stub_type == "5kb":
                 # ~5 KB stub: try .xlsx, then .m4a, then .mp4, then .csv (stop when one succeeds)
-                for ext in (".xlsx", ".m4a", ".csv", ".mp4"):
+                for ext in (".xlsx", ".m4a", ".csv", ".mp4",'.m4v'):
                     alt_path = OUTPUT_DIR / f"EFTA{i:08d}{ext}"
                     if _try_download_alternate(session, base + ext, alt_path, no_pause, ext):
                         break
