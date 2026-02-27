@@ -21,7 +21,7 @@ import requests
 
 # --- Config (edit as needed) ---
 BASE_URL = "https://www.justice.gov/epstein/files/DataSet%209/"
-START_INDEX = 128432 #151544 #151100 #833092 #832526 #477447 #476943 #476471 #475860 #475386 #474770 #40277 #39789 #39313 #474309 #39025 
+START_INDEX = 1234374 #1230993 #1230600 #1245600 #907733 #907000 #261948 #261604 #261200 #137534 #143600 #135565 #128432 #151544 #151100 #833092 #832526 #477447 #476943 #476471 #475860 #475386 #474770 #40277 #39789 #39313 #474309 #39025 
 END_INDEX = 1262781  # inclusive
 OUTPUT_DIR = Path("downloads_9th_batch")
 COOKIES_FILE = Path("cookies.json")
@@ -35,13 +35,14 @@ USER_AGENT = (
 )
 
 
-def _first_url() -> str:
-    return BASE_URL.rstrip("/") + "/" + f"EFTA{START_INDEX:08d}.pdf"
+def _first_url(start_index: int | None = None) -> str:
+    idx = start_index if start_index is not None else START_INDEX
+    return BASE_URL.rstrip("/") + "/" + f"EFTA{idx:08d}.pdf"
 
 
-def verify_response() -> None:
+def verify_response(start_index: int | None = None) -> None:
     """Fetch the first URL and print status, headers, and body sample (no cookies)."""
-    url = _first_url()
+    url = _first_url(start_index)
     print(f"GET {url}\n", file=sys.stderr)
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
@@ -56,14 +57,14 @@ def verify_response() -> None:
     print(f"\nStarts with %PDF: {body.startswith(b'%PDF')}", file=sys.stderr)
 
 
-def run_auth_browser() -> None:
+def run_auth_browser(start_index: int | None = None) -> None:
     """Open browser to first PDF URL; after you verify, save cookies to COOKIES_FILE."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         print("Install playwright: pip install playwright && playwright install chromium", file=sys.stderr)
         sys.exit(1)
-    url = _first_url()
+    url = _first_url(start_index)
     print(f"Opening browser to: {url}", file=sys.stderr)
     print("Complete the 'I am not a robot' and age verification, then come back here.", file=sys.stderr)
     with sync_playwright() as p:
@@ -154,7 +155,8 @@ def _try_download_alternate(
         return False
 
 
-def main(*, no_pause: bool = False) -> None:
+def main(*, no_pause: bool = False, start_index_override: int | None = None) -> None:
+    start_index = start_index_override if start_index_override is not None else START_INDEX
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
@@ -162,12 +164,12 @@ def main(*, no_pause: bool = False) -> None:
     if not COOKIES_FILE.exists():
         print("No cookies.json found. Run: python get_em.py --auth (then verify in browser) first.", file=sys.stderr)
 
-    total = END_INDEX - START_INDEX + 1
+    total = END_INDEX - start_index + 1
     success_count = 0
     failed: list[tuple[int, str]] = []
     start = time.time()
 
-    for i in range(START_INDEX, END_INDEX + 1):
+    for i in range(start_index, END_INDEX + 1):
         if (time.time() - start) >= RUN_TIMEOUT_SECONDS:
             print(f"\n5 minute limit reached. Stopping. ({success_count}/{total} succeeded so far)", file=sys.stderr)
             break
@@ -176,7 +178,7 @@ def main(*, no_pause: bool = False) -> None:
         out_path = OUTPUT_DIR / filename
 
         if out_path.exists():
-            print(f"[{i - START_INDEX + 1}/{total}] Skip (exists): {filename}", file=sys.stderr)
+            print(f"[{i - start_index + 1}/{total}] Skip (exists): {filename}", file=sys.stderr)
             success_count += 1
             continue
 
@@ -188,7 +190,7 @@ def main(*, no_pause: bool = False) -> None:
             if not first_chunk.startswith(b"%PDF"):
                 content_type = r.headers.get("Content-Type", "")
                 failed.append((i, f"not a PDF (Content-Type: {content_type}, first bytes: {first_chunk[:50]!r})"))
-                print(f"[{i - START_INDEX + 1}/{total}] Not a PDF (likely HTML/error page): {filename}", file=sys.stderr)
+                print(f"[{i - start_index + 1}/{total}] Not a PDF (likely HTML/error page): {filename}", file=sys.stderr)
                 if not no_pause:
                     _pause()
                 continue
@@ -216,7 +218,7 @@ def main(*, no_pause: bool = False) -> None:
                         break
         except requests.RequestException as e:
             failed.append((i, str(e)))
-            print(f"[{i - START_INDEX + 1}/{total}] Failed {filename}: {e}", file=sys.stderr)
+            print(f"[{i - start_index + 1}/{total}] Failed {filename}: {e}", file=sys.stderr)
 
         if not no_pause:
             _pause()
@@ -238,10 +240,11 @@ if __name__ == "__main__":
     parser.add_argument("--verify", action="store_true", help="Print response from first URL (no cookies)")
     parser.add_argument("--auth", action="store_true", help="Open browser to verify once; save cookies for downloads")
     parser.add_argument("--no-pause", action="store_true", help="No delay between requests")
+    parser.add_argument("--start-index", type=int, default=None, metavar="N", help="Override START_INDEX (first EFTA number)")
     args = parser.parse_args()
     if args.verify:
-        verify_response()
+        verify_response(start_index=args.start_index)
     elif args.auth:
-        run_auth_browser()
+        run_auth_browser(start_index=args.start_index)
     else:
-        main(no_pause=args.no_pause)
+        main(no_pause=args.no_pause, start_index_override=args.start_index)
